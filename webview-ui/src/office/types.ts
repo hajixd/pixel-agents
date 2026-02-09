@@ -61,6 +61,7 @@ export interface ToolActivity {
 }
 
 export const FurnitureType = {
+  // Original hand-drawn sprites (kept for backward compat)
   DESK: 'desk',
   BOOKSHELF: 'bookshelf',
   PLANT: 'plant',
@@ -69,6 +70,24 @@ export const FurnitureType = {
   CHAIR: 'chair',
   PC: 'pc',
   LAMP: 'lamp',
+  // Tileset — Desks
+  TABLE_WOOD_SM_VERTICAL: 'ts_table_wood_sm_vertical',
+  // Tileset — Chairs
+  CHAIR_CUSHION: 'ts_chair_cushion',
+  CHAIR_SPINNING: 'ts_chair_spinning',
+  BENCH: 'ts_bench',
+  // Tileset — Decor
+  WATER_COOLER: 'ts_water_cooler',
+  FRIDGE: 'ts_fridge',
+  DECO_3: 'ts_deco_3',
+  CLOCK: 'ts_clock',
+  LIBRARY_GRAY_FULL: 'ts_library_gray_full',
+  PLANT_SMALL: 'ts_plant_small',
+  PAINTING_LARGE_1: 'ts_painting_large_1',
+  PAINTING_LARGE_2: 'ts_painting_large_2',
+  PAINTING_SMALL_1: 'ts_painting_small_1',
+  PAINTING_SMALL_2: 'ts_painting_small_2',
+  PAINTING_SMALL_3: 'ts_painting_small_3',
 } as const
 export type FurnitureType = (typeof FurnitureType)[keyof typeof FurnitureType]
 

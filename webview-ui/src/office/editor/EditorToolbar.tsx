@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { EditTool, TileType, FurnitureType } from '../types.js'
 import type { TileType as TileTypeVal } from '../types.js'
-import { FURNITURE_CATALOG } from '../layout/furnitureCatalog.js'
+import { FURNITURE_CATEGORIES, getCatalogByCategory } from '../layout/furnitureCatalog.js'
+import type { FurnitureCategory } from '../layout/furnitureCatalog.js'
 import { getCachedSprite } from '../sprites/spriteCache.js'
 
 const TILE_OPTIONS: Array<{ type: TileTypeVal; label: string; color: string }> = [
@@ -25,6 +27,23 @@ const activeBtnStyle: React.CSSProperties = {
   ...btnStyle,
   background: 'var(--vscode-button-background)',
   color: 'var(--vscode-button-foreground)',
+  border: '1px solid var(--vscode-focusBorder, #007fd4)',
+}
+
+const tabStyle: React.CSSProperties = {
+  padding: '2px 6px',
+  fontSize: '10px',
+  background: 'transparent',
+  color: 'var(--vscode-button-secondaryForeground, #999)',
+  border: '1px solid transparent',
+  borderRadius: 2,
+  cursor: 'pointer',
+}
+
+const activeTabStyle: React.CSSProperties = {
+  ...tabStyle,
+  background: 'var(--vscode-button-secondaryBackground, #3A3D41)',
+  color: 'var(--vscode-button-secondaryForeground, #ccc)',
   border: '1px solid var(--vscode-focusBorder, #007fd4)',
 }
 
@@ -53,6 +72,10 @@ export function EditorToolbar({
   onUndo,
   onReset,
 }: EditorToolbarProps) {
+  const [activeCategory, setActiveCategory] = useState<FurnitureCategory>('desks')
+
+  const categoryItems = getCatalogByCategory(activeCategory)
+
   return (
     <div
       style={{
@@ -67,7 +90,7 @@ export function EditorToolbar({
         display: 'flex',
         flexDirection: 'column',
         gap: 6,
-        maxWidth: 300,
+        maxWidth: 320,
       }}
     >
       {/* Tool row */}
@@ -130,51 +153,67 @@ export function EditorToolbar({
         </div>
       )}
 
-      {/* Sub-panel: Furniture types */}
+      {/* Sub-panel: Furniture types with category tabs */}
       {activeTool === EditTool.FURNITURE_PLACE && (
-        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-          {FURNITURE_CATALOG.map((entry) => {
-            const cached = getCachedSprite(entry.sprite, 2)
-            const thumbSize = 28
-            const isSelected = selectedFurnitureType === entry.type
-            return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {/* Category tabs */}
+          <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            {FURNITURE_CATEGORIES.map((cat) => (
               <button
-                key={entry.type}
-                onClick={() => onFurnitureTypeChange(entry.type)}
-                title={entry.label}
-                style={{
-                  width: thumbSize,
-                  height: thumbSize,
-                  background: '#2A2A3A',
-                  border: isSelected ? '2px solid var(--vscode-focusBorder, #007fd4)' : '1px solid #555',
-                  borderRadius: 3,
-                  cursor: 'pointer',
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  overflow: 'hidden',
-                }}
+                key={cat.id}
+                style={activeCategory === cat.id ? activeTabStyle : tabStyle}
+                onClick={() => setActiveCategory(cat.id)}
               >
-                <canvas
-                  ref={(el) => {
-                    if (!el) return
-                    const ctx = el.getContext('2d')
-                    if (!ctx) return
-                    const scale = Math.min(thumbSize / cached.width, thumbSize / cached.height) * 0.8
-                    el.width = thumbSize
-                    el.height = thumbSize
-                    ctx.imageSmoothingEnabled = false
-                    ctx.clearRect(0, 0, thumbSize, thumbSize)
-                    const dw = cached.width * scale
-                    const dh = cached.height * scale
-                    ctx.drawImage(cached, (thumbSize - dw) / 2, (thumbSize - dh) / 2, dw, dh)
-                  }}
-                  style={{ width: thumbSize, height: thumbSize }}
-                />
+                {cat.label}
               </button>
-            )
-          })}
+            ))}
+          </div>
+          {/* Furniture items in active category */}
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxHeight: 120, overflowY: 'auto' }}>
+            {categoryItems.map((entry) => {
+              const cached = getCachedSprite(entry.sprite, 2)
+              const thumbSize = 28
+              const isSelected = selectedFurnitureType === entry.type
+              return (
+                <button
+                  key={entry.type}
+                  onClick={() => onFurnitureTypeChange(entry.type)}
+                  title={entry.label}
+                  style={{
+                    width: thumbSize,
+                    height: thumbSize,
+                    background: '#2A2A3A',
+                    border: isSelected ? '2px solid var(--vscode-focusBorder, #007fd4)' : '1px solid #555',
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    padding: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    overflow: 'hidden',
+                    flexShrink: 0,
+                  }}
+                >
+                  <canvas
+                    ref={(el) => {
+                      if (!el) return
+                      const ctx = el.getContext('2d')
+                      if (!ctx) return
+                      const scale = Math.min(thumbSize / cached.width, thumbSize / cached.height) * 0.8
+                      el.width = thumbSize
+                      el.height = thumbSize
+                      ctx.imageSmoothingEnabled = false
+                      ctx.clearRect(0, 0, thumbSize, thumbSize)
+                      const dw = cached.width * scale
+                      const dh = cached.height * scale
+                      ctx.drawImage(cached, (thumbSize - dw) / 2, (thumbSize - dh) / 2, dw, dh)
+                    }}
+                    style={{ width: thumbSize, height: thumbSize }}
+                  />
+                </button>
+              )
+            })}
+          </div>
         </div>
       )}
 

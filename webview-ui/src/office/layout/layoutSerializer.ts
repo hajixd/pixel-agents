@@ -49,21 +49,35 @@ export function getBlockedTiles(furniture: PlacedFurniture[]): Set<string> {
   return tiles
 }
 
-/** Generate desk slots from placed desk furniture */
+/** Generate desk slots from any furniture with isDesk=true */
 export function layoutToDeskSlots(furniture: PlacedFurniture[], blockedTiles: Set<string>): DeskSlot[] {
   const slots: DeskSlot[] = []
   for (const item of furniture) {
-    if (item.type !== FurnitureType.DESK) continue
     const entry = getCatalogEntry(item.type)
-    if (!entry) continue
+    if (!entry || !entry.isDesk) continue
 
-    // For a 2x2 desk at (col, row), generate up to 4 chair positions
-    const candidates: Array<{ chairCol: number; chairRow: number; facingDir: Direction }> = [
-      { chairCol: item.col, chairRow: item.row - 1, facingDir: Direction.DOWN },     // top
-      { chairCol: item.col + 1, chairRow: item.row + 2, facingDir: Direction.UP },    // bottom
-      { chairCol: item.col - 1, chairRow: item.row + 1, facingDir: Direction.RIGHT }, // left
-      { chairCol: item.col + 2, chairRow: item.row, facingDir: Direction.LEFT },      // right
-    ]
+    const fw = entry.footprintW
+    const fh = entry.footprintH
+
+    // Generate chair positions along each edge of the desk
+    const candidates: Array<{ chairCol: number; chairRow: number; facingDir: Direction }> = []
+
+    // Top edge: chairs above the desk, facing DOWN
+    for (let dc = 0; dc < fw; dc++) {
+      candidates.push({ chairCol: item.col + dc, chairRow: item.row - 1, facingDir: Direction.DOWN })
+    }
+    // Bottom edge: chairs below the desk, facing UP
+    for (let dc = 0; dc < fw; dc++) {
+      candidates.push({ chairCol: item.col + dc, chairRow: item.row + fh, facingDir: Direction.UP })
+    }
+    // Left edge: chairs left of desk, facing RIGHT
+    for (let dr = 0; dr < fh; dr++) {
+      candidates.push({ chairCol: item.col - 1, chairRow: item.row + dr, facingDir: Direction.RIGHT })
+    }
+    // Right edge: chairs right of desk, facing LEFT
+    for (let dr = 0; dr < fh; dr++) {
+      candidates.push({ chairCol: item.col + fw, chairRow: item.row + dr, facingDir: Direction.LEFT })
+    }
 
     for (const c of candidates) {
       // Chair tile must be in bounds and not blocked

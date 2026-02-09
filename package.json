@@ -47,15 +47,19 @@
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "npm run check-types && npm run lint && node esbuild.js --production && npm run build:webview",
     "check-types": "tsc --noEmit",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "import-tileset": "tsx scripts/import-tileset.ts"
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.54.0",
-    "eslint": "^9.39.2",
+    "@types/pngjs": "^6.0.5",
+    "@types/vscode": "^1.109.0",
     "esbuild": "^0.27.2",
+    "eslint": "^9.39.2",
     "npm-run-all": "^4.1.5",
-    "typescript": "^5.9.3"
+    "pngjs": "^7.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.54.0"
   }
 }
