@@ -16,7 +16,7 @@ import {
 import type { Character, Seat, FurnitureInstance, TileType as TileTypeVal, OfficeLayout, PlacedFurniture } from '../types.js'
 import { createCharacter, updateCharacter } from './characters.js'
 import { matrixEffectSeeds } from './matrixEffect.js'
-import { getWalkableTiles, findPath } from '../layout/tileMap.js'
+import { isWalkable, getWalkableTiles, findPath } from '../layout/tileMap.js'
 import {
   createDefaultLayout,
   layoutToTileMap,
@@ -331,6 +331,27 @@ export class OfficeState {
         ch.seatTimer = INACTIVE_SEAT_TIMER_MIN_SEC + Math.random() * INACTIVE_SEAT_TIMER_RANGE_SEC
       }
     }
+  }
+
+  /** Walk an agent to an arbitrary walkable tile (right-click command) */
+  walkToTile(agentId: number, col: number, row: number): boolean {
+    const ch = this.characters.get(agentId)
+    if (!ch || ch.isSubagent) return false
+    if (!isWalkable(col, row, this.tileMap, this.blockedTiles)) {
+      // Also allow walking to own seat tile (blocked for others but not self)
+      const key = this.ownSeatKey(ch)
+      if (!key || key !== `${col},${row}`) return false
+    }
+    const path = this.withOwnSeatUnblocked(ch, () =>
+      findPath(ch.tileCol, ch.tileRow, col, row, this.tileMap, this.blockedTiles)
+    )
+    if (path.length === 0) return false
+    ch.path = path
+    ch.moveProgress = 0
+    ch.state = CharacterState.WALK
+    ch.frame = 0
+    ch.frameTimer = 0
+    return true
   }
 
   /** Create a sub-agent character with the parent's palette. Returns the sub-agent ID. */

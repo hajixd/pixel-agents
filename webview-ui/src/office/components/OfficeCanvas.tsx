@@ -618,10 +618,16 @@ export function OfficeCanvas({ officeState, onClick, isEditMode, editorState, on
   }, [officeState, editorState])
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    if (isEditMode) {
-      e.preventDefault()
+    e.preventDefault()
+    if (isEditMode) return
+    // Right-click to walk selected agent to tile
+    if (officeState.selectedAgentId !== null) {
+      const tile = screenToTile(e.clientX, e.clientY)
+      if (tile) {
+        officeState.walkToTile(officeState.selectedAgentId, tile.col, tile.row)
+      }
     }
-  }, [isEditMode])
+  }, [isEditMode, officeState, screenToTile])
 
   // Wheel: Ctrl+wheel to zoom, plain wheel/trackpad to pan
   const handleWheel = useCallback(
