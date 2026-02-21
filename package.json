@@ -1,8 +1,15 @@
 {
   "name": "pixel-agents",
   "displayName": "Pixel Agents",
-  "description": "Pixel Agents VS Code Extension",
-  "version": "0.0.1",
+  "description": "Pixel art office where your Claude Code agents come to life as animated characters",
+  "version": "1.0.0",
+  "publisher": "pablodelucca",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pablodelucca/pixel-agents"
+  },
+  "icon": "icon.png",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.109.0"
   },

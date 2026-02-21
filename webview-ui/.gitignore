@@ -27,3 +27,4 @@ dist-ssr
 */assets/*
 !*/assets/characters/
 !*/assets/default-layout.json
+!*/assets/walls.png

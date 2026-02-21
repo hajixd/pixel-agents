@@ -1,9 +1,15 @@
 .vscode/**
 .vscode-test/**
 out/**
-node_modules/**
+**/node_modules/**
 src/**
 webview-ui/**
+scripts/**
+sprites-export/**
+logs/**
+.github/**
+.claude/**
+.env
 .gitignore
 esbuild.js
 **/tsconfig.json
@@ -11,3 +17,5 @@ esbuild.js
 **/*.map
 **/*.ts
 **/.vscode-test.*
+CLAUDE.md
+**/*.jsonl
