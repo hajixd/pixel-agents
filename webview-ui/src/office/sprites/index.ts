@@ -11,4 +11,3 @@ export {
   getCharacterSprites,
 } from './spriteData.js'
 export type { CharacterSprites } from './spriteData.js'
-export * from './tilesetSprites.js'
