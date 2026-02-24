@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { SettingsModal } from './SettingsModal.js'
 
-interface TopRightControlsProps {
+interface BottomToolbarProps {
   isEditMode: boolean
   onOpenClaude: () => void
   onToggleEditMode: () => void
@@ -11,8 +11,8 @@ interface TopRightControlsProps {
 
 const panelStyle: React.CSSProperties = {
   position: 'absolute',
-  top: 10,
-  right: 10,
+  bottom: 10,
+  left: 10,
   zIndex: 'var(--pixel-controls-z)',
   display: 'flex',
   alignItems: 'center',
@@ -47,7 +47,7 @@ export function BottomToolbar({
   onToggleEditMode,
   isDebugMode,
   onToggleDebugMode,
-}: TopRightControlsProps) {
+}: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
 

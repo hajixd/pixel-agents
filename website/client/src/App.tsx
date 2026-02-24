@@ -13,8 +13,8 @@ import { useEditorActions } from './hooks/useEditorActions.js'
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js'
 import { ZoomControls } from './components/ZoomControls.js'
 import { BottomToolbar } from './components/BottomToolbar.js'
-import { PromptBar } from './components/PromptBar.js'
 import { DebugView } from './components/DebugView.js'
+import { PromptInput } from './components/PromptInput.js'
 
 // Game state lives outside React — updated imperatively by message handlers
 const officeStateRef = { current: null as OfficeState | null }
@@ -178,7 +178,7 @@ function App() {
 
   if (!layoutReady) {
     return (
-      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--vscode-foreground)' }}>
+      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255, 255, 255, 0.8)' }}>
         Loading...
       </div>
     )
@@ -232,7 +232,7 @@ function App() {
         onToggleDebugMode={handleToggleDebugMode}
       />
 
-      <PromptBar />
+      {!editor.isEditMode && <PromptInput agentCount={agents.length} />}
 
       {editor.isEditMode && editor.isDirty && (
         <EditActionBar editor={editor} editorState={editorState} />

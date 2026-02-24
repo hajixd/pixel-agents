@@ -29,6 +29,7 @@ export function launchNewTerminal(
 	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
 	webview: vscode.Webview | undefined,
 	persistAgents: () => void,
+	prompt?: string,
 ): void {
 	const idx = nextTerminalIndexRef.current++;
 	const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -68,6 +69,7 @@ export function launchNewTerminal(
 		isWaiting: false,
 		permissionSent: false,
 		hadToolsInTurn: false,
+		pendingPrompt: prompt,
 	};
 
 	agents.set(id, agent);
@@ -91,6 +93,14 @@ export function launchNewTerminal(
 				jsonlPollTimers.delete(id);
 				startFileWatching(id, agent.jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, webview);
 				readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+				// Send pending prompt once Claude has started (1s delay to allow full init)
+				if (agent.pendingPrompt) {
+					const pendingText = agent.pendingPrompt;
+					agent.pendingPrompt = undefined;
+					setTimeout(() => {
+						agent.terminalRef.sendText(pendingText);
+					}, 1000);
+				}
 			}
 		} catch { /* file may not exist yet */ }
 	}, JSONL_POLL_INTERVAL_MS);

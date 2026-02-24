@@ -1,8 +1,8 @@
-import type * as vscode from 'vscode';
+import type { IPty } from 'node-pty';
 
-export interface AgentState {
+export interface WebAgentState {
 	id: number;
-	terminalRef: vscode.Terminal;
+	ptyProcess: IPty;
 	projectDir: string;
 	jsonlFile: string;
 	fileOffset: number;
@@ -15,12 +15,4 @@ export interface AgentState {
 	isWaiting: boolean;
 	permissionSent: boolean;
 	hadToolsInTurn: boolean;
-	pendingPrompt?: string;
-}
-
-export interface PersistedAgent {
-	id: number;
-	terminalName: string;
-	jsonlFile: string;
-	projectDir: string;
 }

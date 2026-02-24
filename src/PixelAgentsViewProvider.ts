@@ -70,6 +70,34 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
 					this.jsonlPollTimers, this.projectScanTimer,
 					this.webview, this.persistAgents,
 				);
+			} else if (message.type === 'sendPrompt') {
+				const prompt = message.prompt as string;
+				// Find an idle agent: prefer one explicitly waiting for input, then any with no active tools
+				let idleAgent: AgentState | null = null;
+				for (const agent of this.agents.values()) {
+					if (agent.isWaiting) { idleAgent = agent; break; }
+				}
+				if (!idleAgent) {
+					for (const agent of this.agents.values()) {
+						if (agent.activeToolIds.size === 0 && agent.activeToolStatuses.size === 0) {
+							idleAgent = agent;
+							break;
+						}
+					}
+				}
+				if (idleAgent) {
+					idleAgent.terminalRef.show();
+					idleAgent.terminalRef.sendText(prompt);
+				} else {
+					launchNewTerminal(
+						this.nextAgentId, this.nextTerminalIndex,
+						this.agents, this.activeAgentId, this.knownJsonlFiles,
+						this.fileWatchers, this.pollingTimers, this.waitingTimers, this.permissionTimers,
+						this.jsonlPollTimers, this.projectScanTimer,
+						this.webview, this.persistAgents,
+						prompt,
+					);
+				}
 			} else if (message.type === 'focusAgent') {
 				const agent = this.agents.get(message.id);
 				if (agent) {

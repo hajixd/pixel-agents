@@ -1,0 +1,25 @@
+{
+  "name": "pixel-agents-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "node-pty": "^1.0.0",
+    "pngjs": "^7.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "22.x",
+    "@types/pngjs": "^6.0.5",
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
