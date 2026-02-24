@@ -341,6 +341,10 @@ export function useExtensionMessages(
         } catch (err) {
           console.error(`❌ Webview: Error processing furnitureAssetsLoaded:`, err)
         }
+      } else if (msg.type === 'serverError') {
+        const message = typeof msg.message === 'string' ? msg.message : 'Server error'
+        console.error('[Webview] Server error:', message)
+        window.alert(message)
       }
     }
     window.addEventListener('message', handler)

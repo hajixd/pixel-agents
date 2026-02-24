@@ -16,5 +16,8 @@
 		"out",
 		"scripts",
 		"website"
+	],
+	"include": [
+		"src"
 	]
 }
