@@ -204,11 +204,16 @@ export function getSeatTiles(seats: Map<string, Seat>): Set<string> {
   return tiles
 }
 
-/** Default floor colors for the two rooms */
-const DEFAULT_LEFT_ROOM_COLOR: FloorColor = { h: 35, s: 30, b: 15, c: 0 }  // warm beige
-const DEFAULT_RIGHT_ROOM_COLOR: FloorColor = { h: 25, s: 45, b: 5, c: 10 }  // warm brown
-const DEFAULT_CARPET_COLOR: FloorColor = { h: 280, s: 40, b: -5, c: 0 }     // purple
-const DEFAULT_DOORWAY_COLOR: FloorColor = { h: 35, s: 25, b: 10, c: 0 }     // tan
+/** Default floor colors for the larger multi-room office */
+const DEFAULT_LEFT_NORTH_COLOR: FloorColor = { h: 36, s: 32, b: 16, c: 0 }   // warm oak
+const DEFAULT_LEFT_MID_COLOR: FloorColor = { h: 26, s: 38, b: 10, c: 4 }     // walnut
+const DEFAULT_LEFT_SOUTH_COLOR: FloorColor = { h: 202, s: 20, b: -4, c: 2 }  // cool slate
+const DEFAULT_CENTER_NORTH_COLOR: FloorColor = { h: 208, s: 18, b: 6, c: 0 } // meeting space
+const DEFAULT_CENTER_SOUTH_COLOR: FloorColor = { h: 198, s: 14, b: -2, c: 1 } // operations
+const DEFAULT_RIGHT_NORTH_COLOR: FloorColor = { h: 18, s: 40, b: 10, c: 5 }  // engineering warm
+const DEFAULT_RIGHT_MID_COLOR: FloorColor = { h: 214, s: 24, b: 2, c: 0 }    // design cool
+const DEFAULT_RIGHT_SOUTH_COLOR: FloorColor = { h: 164, s: 20, b: -8, c: 2 } // lab green
+const DEFAULT_CORRIDOR_COLOR: FloorColor = { h: 44, s: 18, b: 18, c: 0 }     // corridor stripe
 
 /** Create the default office layout matching the current hardcoded office */
 export function createDefaultLayout(): OfficeLayout {
@@ -217,52 +222,138 @@ export function createDefaultLayout(): OfficeLayout {
   const F2 = TileType.FLOOR_2
   const F3 = TileType.FLOOR_3
   const F4 = TileType.FLOOR_4
+  const F5 = TileType.FLOOR_5
+  const F6 = TileType.FLOOR_6
+  const F7 = TileType.FLOOR_7
 
   const tiles: TileTypeVal[] = []
   const tileColors: Array<FloorColor | null> = []
 
+  const isDoorRow = (row: number, openRanges: Array<[number, number]>): boolean =>
+    openRanges.some(([start, end]) => row >= start && row <= end)
+
+  const isDoorCol = (col: number, openRanges: Array<[number, number]>): boolean =>
+    openRanges.some(([start, end]) => col >= start && col <= end)
+
   for (let r = 0; r < DEFAULT_ROWS; r++) {
     for (let c = 0; c < DEFAULT_COLS; c++) {
-      if (r === 0 || r === DEFAULT_ROWS - 1) { tiles.push(W); tileColors.push(null); continue }
-      if (c === 0 || c === DEFAULT_COLS - 1) { tiles.push(W); tileColors.push(null); continue }
-      if (c === 10) {
-        if (r >= 4 && r <= 6) {
-          tiles.push(F4); tileColors.push(DEFAULT_DOORWAY_COLOR)
+      if (r === 0 || r === DEFAULT_ROWS - 1 || c === 0 || c === DEFAULT_COLS - 1) {
+        tiles.push(W)
+        tileColors.push(null)
+        continue
+      }
+
+      const isVerticalWestWall = c === 16 && !isDoorRow(r, [[6, 8], [12, 13], [22, 24]])
+      const isVerticalEastWall = c === 32 && !isDoorRow(r, [[5, 7], [14, 16], [21, 23]])
+      const isCenterHorizontalWall = r === 15 && c >= 16 && c <= 32 && !isDoorCol(c, [[23, 25]])
+      const isLeftMeetingWall = r === 10 && c >= 1 && c <= 15 && !isDoorCol(c, [[7, 8]])
+      const isRightLabWall = r === 20 && c >= 33 && c <= DEFAULT_COLS - 2 && !isDoorCol(c, [[39, 40]])
+
+      if (isVerticalWestWall || isVerticalEastWall || isCenterHorizontalWall || isLeftMeetingWall || isRightLabWall) {
+        tiles.push(W)
+        tileColors.push(null)
+        continue
+      }
+
+      if (c >= 22 && c <= 26) {
+        tiles.push(F6)
+        tileColors.push(DEFAULT_CORRIDOR_COLOR)
+        continue
+      }
+
+      if (c < 16) {
+        if (r < 10) {
+          tiles.push(F1)
+          tileColors.push(DEFAULT_LEFT_NORTH_COLOR)
+        } else if (r < 20) {
+          tiles.push(F2)
+          tileColors.push(DEFAULT_LEFT_MID_COLOR)
         } else {
-          tiles.push(W); tileColors.push(null)
+          tiles.push(F3)
+          tileColors.push(DEFAULT_LEFT_SOUTH_COLOR)
         }
         continue
       }
-      if (c >= 15 && c <= 18 && r >= 7 && r <= 9) {
-        tiles.push(F3); tileColors.push(DEFAULT_CARPET_COLOR); continue
+
+      if (c > 32) {
+        if (r < 12) {
+          tiles.push(F2)
+          tileColors.push(DEFAULT_RIGHT_NORTH_COLOR)
+        } else if (r < 20) {
+          tiles.push(F3)
+          tileColors.push(DEFAULT_RIGHT_MID_COLOR)
+        } else {
+          tiles.push(F4)
+          tileColors.push(DEFAULT_RIGHT_SOUTH_COLOR)
+        }
+        continue
       }
-      if (c < 10) {
-        tiles.push(F1); tileColors.push(DEFAULT_LEFT_ROOM_COLOR)
+
+      if (r < 15) {
+        tiles.push(F5)
+        tileColors.push(DEFAULT_CENTER_NORTH_COLOR)
       } else {
-        tiles.push(F2); tileColors.push(DEFAULT_RIGHT_ROOM_COLOR)
+        tiles.push(F7)
+        tileColors.push(DEFAULT_CENTER_SOUTH_COLOR)
       }
     }
   }
 
-  const furniture: PlacedFurniture[] = [
-    { uid: 'desk-left', type: FurnitureType.DESK, col: 4, row: 3 },
-    { uid: 'desk-right', type: FurnitureType.DESK, col: 13, row: 3 },
-    { uid: 'bookshelf-1', type: FurnitureType.BOOKSHELF, col: 1, row: 5 },
-    { uid: 'plant-left', type: FurnitureType.PLANT, col: 1, row: 1 },
-    { uid: 'cooler-1', type: FurnitureType.COOLER, col: 17, row: 7 },
-    { uid: 'plant-right', type: FurnitureType.PLANT, col: 18, row: 1 },
-    { uid: 'whiteboard-1', type: FurnitureType.WHITEBOARD, col: 15, row: 0 },
-    // Left desk chairs
-    { uid: 'chair-l-top', type: FurnitureType.CHAIR, col: 4, row: 2 },
-    { uid: 'chair-l-bottom', type: FurnitureType.CHAIR, col: 5, row: 5 },
-    { uid: 'chair-l-left', type: FurnitureType.CHAIR, col: 3, row: 4 },
-    { uid: 'chair-l-right', type: FurnitureType.CHAIR, col: 6, row: 3 },
-    // Right desk chairs
-    { uid: 'chair-r-top', type: FurnitureType.CHAIR, col: 13, row: 2 },
-    { uid: 'chair-r-bottom', type: FurnitureType.CHAIR, col: 14, row: 5 },
-    { uid: 'chair-r-left', type: FurnitureType.CHAIR, col: 12, row: 4 },
-    { uid: 'chair-r-right', type: FurnitureType.CHAIR, col: 15, row: 3 },
-  ]
+  const furniture: PlacedFurniture[] = []
+
+  const addDeskCluster = (idPrefix: string, col: number, row: number): void => {
+    furniture.push({ uid: `${idPrefix}-desk`, type: FurnitureType.DESK, col, row })
+    furniture.push({ uid: `${idPrefix}-chair-top`, type: FurnitureType.CHAIR, col, row: row - 1 })
+    furniture.push({ uid: `${idPrefix}-chair-bottom`, type: FurnitureType.CHAIR, col: col + 1, row: row + 2 })
+    furniture.push({ uid: `${idPrefix}-chair-left`, type: FurnitureType.CHAIR, col: col - 1, row: row + 1 })
+    furniture.push({ uid: `${idPrefix}-chair-right`, type: FurnitureType.CHAIR, col: col + 2, row })
+  }
+
+  // Left wing
+  addDeskCluster('left-nw-1', 3, 3)
+  addDeskCluster('left-nw-2', 9, 3)
+  addDeskCluster('left-mid-1', 3, 13)
+  addDeskCluster('left-mid-2', 9, 13)
+  addDeskCluster('left-sw-1', 3, 23)
+  addDeskCluster('left-sw-2', 9, 23)
+
+  // Center wing
+  addDeskCluster('center-n-1', 18, 4)
+  addDeskCluster('center-n-2', 28, 4)
+  addDeskCluster('center-n-3', 18, 9)
+  addDeskCluster('center-n-4', 28, 9)
+  addDeskCluster('center-s-1', 18, 19)
+  addDeskCluster('center-s-2', 28, 19)
+  addDeskCluster('center-s-3', 18, 24)
+  addDeskCluster('center-s-4', 28, 24)
+
+  // Right wing
+  addDeskCluster('right-ne-1', 35, 4)
+  addDeskCluster('right-ne-2', 41, 4)
+  addDeskCluster('right-mid-1', 35, 13)
+  addDeskCluster('right-mid-2', 41, 13)
+  addDeskCluster('right-se-1', 36, 23)
+  addDeskCluster('right-se-2', 42, 23)
+
+  furniture.push(
+    { uid: 'bookshelf-west-1', type: FurnitureType.BOOKSHELF, col: 1, row: 4 },
+    { uid: 'bookshelf-west-2', type: FurnitureType.BOOKSHELF, col: 1, row: 14 },
+    { uid: 'bookshelf-west-3', type: FurnitureType.BOOKSHELF, col: 1, row: 24 },
+    { uid: 'bookshelf-east-1', type: FurnitureType.BOOKSHELF, col: 46, row: 4 },
+    { uid: 'bookshelf-east-2', type: FurnitureType.BOOKSHELF, col: 46, row: 13 },
+    { uid: 'bookshelf-east-3', type: FurnitureType.BOOKSHELF, col: 46, row: 24 },
+    { uid: 'cooler-center-north', type: FurnitureType.COOLER, col: 24, row: 2 },
+    { uid: 'cooler-center-south', type: FurnitureType.COOLER, col: 24, row: 26 },
+    { uid: 'plant-west-1', type: FurnitureType.PLANT, col: 2, row: 1 },
+    { uid: 'plant-west-2', type: FurnitureType.PLANT, col: 14, row: 28 },
+    { uid: 'plant-center-1', type: FurnitureType.PLANT, col: 17, row: 1 },
+    { uid: 'plant-center-2', type: FurnitureType.PLANT, col: 31, row: 28 },
+    { uid: 'plant-east-1', type: FurnitureType.PLANT, col: 34, row: 1 },
+    { uid: 'plant-east-2', type: FurnitureType.PLANT, col: 45, row: 28 },
+    { uid: 'whiteboard-1', type: FurnitureType.WHITEBOARD, col: 5, row: 0 },
+    { uid: 'whiteboard-2', type: FurnitureType.WHITEBOARD, col: 22, row: 0 },
+    { uid: 'whiteboard-3', type: FurnitureType.WHITEBOARD, col: 38, row: 0 },
+  )
 
   return { version: 1, cols: DEFAULT_COLS, rows: DEFAULT_ROWS, tiles, tileColors, furniture }
 }
@@ -309,16 +400,16 @@ function migrateLayout(layout: OfficeLayout): OfficeLayout {
         tileColors.push(null)
         break
       case 1: // was TILE_FLOOR → FLOOR_1 beige
-        tileColors.push(DEFAULT_LEFT_ROOM_COLOR)
+        tileColors.push(DEFAULT_LEFT_NORTH_COLOR)
         break
       case 2: // was WOOD_FLOOR → FLOOR_2 brown
-        tileColors.push(DEFAULT_RIGHT_ROOM_COLOR)
+        tileColors.push(DEFAULT_RIGHT_NORTH_COLOR)
         break
       case 3: // was CARPET → FLOOR_3 purple
-        tileColors.push(DEFAULT_CARPET_COLOR)
+        tileColors.push(DEFAULT_RIGHT_MID_COLOR)
         break
       case 4: // was DOORWAY → FLOOR_4 tan
-        tileColors.push(DEFAULT_DOORWAY_COLOR)
+        tileColors.push(DEFAULT_CORRIDOR_COLOR)
         break
       default:
         // New tile types (5-7) without colors — use neutral gray

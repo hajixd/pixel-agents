@@ -10,11 +10,34 @@ import { setCharacterTemplates } from '../office/sprites/spriteData.js'
 import { vscode } from '../vscodeApi.js'
 import { playDoneSound, setSoundEnabled } from '../notificationSound.js'
 
+export type AgentProvider = 'claude' | 'codex'
+
 export interface SubagentCharacter {
   id: number
   parentAgentId: number
   parentToolId: string
   label: string
+}
+
+export interface AgentDiagnostics {
+  provider: AgentProvider
+  projectDir: string
+  jsonlFile: string
+  workingDir: string | null
+  processMode?: 'pty' | 'stdio'
+  lastEventAt?: number
+}
+
+export interface ProviderStatus {
+  claude: boolean
+  codex: boolean
+  defaultProvider: AgentProvider
+}
+
+export interface AgentTimelineEntry {
+  timestamp: number
+  role: 'user' | 'assistant' | 'system'
+  text: string
 }
 
 export interface FurnitureAsset {
@@ -42,6 +65,11 @@ export interface ExtensionMessageState {
   agentStatuses: Record<number, string>
   subagentTools: Record<number, Record<string, ToolActivity[]>>
   subagentCharacters: SubagentCharacter[]
+  agentProviders: Record<number, AgentProvider>
+  agentDiagnostics: Record<number, AgentDiagnostics>
+  agentTimelines: Record<number, AgentTimelineEntry[]>
+  providerStatus: ProviderStatus
+  deskDirectories: Record<string, string>
   layoutReady: boolean
   loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> }
 }
@@ -66,6 +94,11 @@ export function useExtensionMessages(
   const [agentStatuses, setAgentStatuses] = useState<Record<number, string>>({})
   const [subagentTools, setSubagentTools] = useState<Record<number, Record<string, ToolActivity[]>>>({})
   const [subagentCharacters, setSubagentCharacters] = useState<SubagentCharacter[]>([])
+  const [agentProviders, setAgentProviders] = useState<Record<number, AgentProvider>>({})
+  const [agentDiagnostics, setAgentDiagnostics] = useState<Record<number, AgentDiagnostics>>({})
+  const [agentTimelines, setAgentTimelines] = useState<Record<number, AgentTimelineEntry[]>>({})
+  const [providerStatus, setProviderStatus] = useState<ProviderStatus>({ claude: false, codex: false, defaultProvider: 'claude' })
+  const [deskDirectories, setDeskDirectories] = useState<Record<string, string>>({})
   const [layoutReady, setLayoutReady] = useState(false)
   const [loadedAssets, setLoadedAssets] = useState<{ catalog: FurnitureAsset[]; sprites: Record<string, string[][]> } | undefined>()
 
@@ -74,7 +107,15 @@ export function useExtensionMessages(
 
   useEffect(() => {
     // Buffer agents from existingAgents until layout is loaded
-    let pendingAgents: Array<{ id: number; palette?: number; hueShift?: number; seatId?: string }> = []
+    let pendingAgents: Array<{ id: number; palette?: number; hueShift?: number; seatId?: string | null }> = []
+
+    const appendTimeline = (id: number, entry: AgentTimelineEntry): void => {
+      setAgentTimelines((prev) => {
+        const list = prev[id] || []
+        const nextList = [...list, entry].slice(-50)
+        return { ...prev, [id]: nextList }
+      })
+    }
 
     const handler = (e: MessageEvent) => {
       const msg = e.data
@@ -97,7 +138,7 @@ export function useExtensionMessages(
         }
         // Add buffered agents now that layout (and seats) are correct
         for (const p of pendingAgents) {
-          os.addAgent(p.id, p.palette, p.hueShift, p.seatId, true)
+          os.addAgent(p.id, p.palette, p.hueShift, p.seatId ?? undefined, true)
         }
         pendingAgents = []
         layoutReadyRef.current = true
@@ -107,9 +148,28 @@ export function useExtensionMessages(
         }
       } else if (msg.type === 'agentCreated') {
         const id = msg.id as number
+        const provider = (msg.provider as AgentProvider | undefined) || 'claude'
+        const seatId = (msg.seatId as string | null | undefined) ?? undefined
         setAgents((prev) => (prev.includes(id) ? prev : [...prev, id]))
         setSelectedAgent(id)
-        os.addAgent(id)
+        os.addAgent(id, undefined, undefined, seatId)
+        setAgentProviders((prev) => ({ ...prev, [id]: provider }))
+        setAgentDiagnostics((prev) => ({
+          ...prev,
+          [id]: {
+            provider,
+            projectDir: String(msg.projectDir ?? ''),
+            jsonlFile: String(msg.jsonlFile ?? ''),
+            workingDir: (msg.workingDir as string | null | undefined) ?? null,
+            processMode: (msg.processMode as 'pty' | 'stdio' | undefined),
+            lastEventAt: Date.now(),
+          },
+        }))
+        appendTimeline(id, {
+          timestamp: Date.now(),
+          role: 'system',
+          text: `Agent created (${provider})`,
+        })
         saveAgentSeats(os)
       } else if (msg.type === 'agentClosed') {
         const id = msg.id as number
@@ -133,18 +193,71 @@ export function useExtensionMessages(
           delete next[id]
           return next
         })
+        setAgentProviders((prev) => {
+          if (!(id in prev)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        setAgentDiagnostics((prev) => {
+          if (!(id in prev)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
+        setAgentTimelines((prev) => {
+          if (!(id in prev)) return prev
+          const next = { ...prev }
+          delete next[id]
+          return next
+        })
         // Remove all sub-agent characters belonging to this agent
         os.removeAllSubagents(id)
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id))
         os.removeAgent(id)
       } else if (msg.type === 'existingAgents') {
         const incoming = msg.agents as number[]
-        const meta = (msg.agentMeta || {}) as Record<number, { palette?: number; hueShift?: number; seatId?: string }>
+        const meta = (msg.agentMeta || {}) as Record<string, { palette?: number; hueShift?: number; seatId?: string | null }>
+        const providers = (msg.agentProviders || {}) as Record<string, AgentProvider>
+        const info = (msg.agentInfo || {}) as Record<string, {
+          provider?: AgentProvider
+          projectDir?: string
+          jsonlFile?: string
+          workingDir?: string | null
+          processMode?: 'pty' | 'stdio'
+        }>
         // Buffer agents — they'll be added in layoutLoaded after seats are built
         for (const id of incoming) {
-          const m = meta[id]
-          pendingAgents.push({ id, palette: m?.palette, hueShift: m?.hueShift, seatId: m?.seatId })
+          const m = meta[String(id)]
+          pendingAgents.push({ id, palette: m?.palette, hueShift: m?.hueShift, seatId: m?.seatId ?? undefined })
         }
+        setAgentProviders((prev) => {
+          const next = { ...prev }
+          for (const id of incoming) {
+            const provider = providers[String(id)] || info[String(id)]?.provider
+            if (provider) next[id] = provider
+          }
+          return next
+        })
+        setAgentDiagnostics((prev) => {
+          const next = { ...prev }
+          for (const id of incoming) {
+            const key = String(id)
+            const i = info[key]
+            if (!i) continue
+            const existing = next[id]
+            const provider = providers[key] || i.provider || existing?.provider || 'claude'
+            next[id] = {
+              provider,
+              projectDir: i.projectDir || existing?.projectDir || '',
+              jsonlFile: i.jsonlFile || existing?.jsonlFile || '',
+              workingDir: i.workingDir ?? existing?.workingDir ?? null,
+              processMode: i.processMode ?? existing?.processMode,
+              lastEventAt: existing?.lastEventAt,
+            }
+          }
+          return next
+        })
         setAgents((prev) => {
           const ids = new Set(prev)
           const merged = [...prev]
@@ -155,6 +268,90 @@ export function useExtensionMessages(
           }
           return merged.sort((a, b) => a - b)
         })
+      } else if (msg.type === 'agentDiagnostics') {
+        const id = msg.id as number
+        const incomingProvider = msg.provider as AgentProvider | undefined
+        setAgentProviders((prev) => ({ ...prev, [id]: incomingProvider || prev[id] || 'claude' }))
+        setAgentDiagnostics((prev) => ({
+          ...prev,
+          [id]: {
+            provider: incomingProvider || prev[id]?.provider || 'claude',
+            projectDir: String(msg.projectDir ?? prev[id]?.projectDir ?? ''),
+            jsonlFile: String(msg.jsonlFile ?? prev[id]?.jsonlFile ?? ''),
+            workingDir: (msg.workingDir as string | null | undefined) ?? prev[id]?.workingDir ?? null,
+            processMode: (msg.processMode as 'pty' | 'stdio' | undefined) ?? prev[id]?.processMode,
+            lastEventAt: prev[id]?.lastEventAt,
+          },
+        }))
+      } else if (msg.type === 'agentHeartbeat') {
+        const id = msg.id as number
+        const timestamp = Number(msg.timestamp || Date.now())
+        setAgentDiagnostics((prev) => {
+          const existing = prev[id]
+          if (!existing) return prev
+          return {
+            ...prev,
+            [id]: {
+              ...existing,
+              jsonlFile: String(msg.jsonlFile ?? existing.jsonlFile),
+              lastEventAt: timestamp,
+            },
+          }
+        })
+      } else if (msg.type === 'providerStatus') {
+        setProviderStatus({
+          claude: Boolean(msg.claude),
+          codex: Boolean(msg.codex),
+          defaultProvider: (msg.defaultProvider as AgentProvider | undefined) || 'claude',
+        })
+      } else if (msg.type === 'deskDirectoriesLoaded') {
+        setDeskDirectories((msg.directories || {}) as Record<string, string>)
+      } else if (msg.type === 'agentResynced') {
+        const id = msg.id as number
+        if (!msg.ok) return
+        setAgentDiagnostics((prev) => {
+          const existing = prev[id]
+          if (!existing) return prev
+          return {
+            ...prev,
+            [id]: {
+              ...existing,
+              jsonlFile: String(msg.jsonlFile ?? existing.jsonlFile),
+              lastEventAt: Date.now(),
+            },
+          }
+        })
+        appendTimeline(id, {
+          timestamp: Date.now(),
+          role: 'system',
+          text: 'Transcript resynced',
+        })
+      } else if (msg.type === 'agentMessage') {
+        const id = msg.id as number
+        const role = (msg.role as 'user' | 'assistant' | undefined) || 'assistant'
+        const text = String(msg.text ?? '').trim()
+        if (!text) return
+        appendTimeline(id, {
+          timestamp: Number(msg.timestamp || Date.now()),
+          role,
+          text,
+        })
+      } else if (msg.type === 'agentTeamSync') {
+        const sourceId = msg.sourceId as number
+        const targetIds = (msg.targetIds as number[] | undefined) || []
+        const note = String(msg.note ?? '').trim()
+        appendTimeline(sourceId, {
+          timestamp: Number(msg.timestamp || Date.now()),
+          role: 'system',
+          text: `Shared context with agents: ${targetIds.join(', ') || '-'}`,
+        })
+        for (const targetId of targetIds) {
+          appendTimeline(targetId, {
+            timestamp: Number(msg.timestamp || Date.now()),
+            role: 'system',
+            text: `Received context from agent #${sourceId}${note ? ` (${note})` : ''}`,
+          })
+        }
       } else if (msg.type === 'agentToolStart') {
         const id = msg.id as number
         const toolId = msg.toolId as string
@@ -168,6 +365,11 @@ export function useExtensionMessages(
         os.setAgentTool(id, toolName)
         os.setAgentActive(id, true)
         os.clearPermissionBubble(id)
+        appendTimeline(id, {
+          timestamp: Date.now(),
+          role: 'system',
+          text: `Tool started: ${status}`,
+        })
         // Create sub-agent character for Task tool subtasks
         if (status.startsWith('Subtask:')) {
           const label = status.slice('Subtask:'.length).trim()
@@ -188,6 +390,11 @@ export function useExtensionMessages(
             [id]: list.map((t) => (t.toolId === toolId ? { ...t, done: true } : t)),
           }
         })
+        appendTimeline(id, {
+          timestamp: Date.now(),
+          role: 'system',
+          text: 'Tool completed',
+        })
       } else if (msg.type === 'agentToolsClear') {
         const id = msg.id as number
         setAgentTools((prev) => {
@@ -207,6 +414,11 @@ export function useExtensionMessages(
         setSubagentCharacters((prev) => prev.filter((s) => s.parentAgentId !== id))
         os.setAgentTool(id, null)
         os.clearPermissionBubble(id)
+        appendTimeline(id, {
+          timestamp: Date.now(),
+          role: 'system',
+          text: 'Turn cleared',
+        })
       } else if (msg.type === 'agentSelected') {
         const id = msg.id as number
         setSelectedAgent(id)
@@ -226,6 +438,11 @@ export function useExtensionMessages(
         if (status === 'waiting') {
           os.showWaitingBubble(id)
           playDoneSound()
+          appendTimeline(id, {
+            timestamp: Date.now(),
+            role: 'system',
+            text: 'Waiting for input',
+          })
         }
       } else if (msg.type === 'agentToolPermission') {
         const id = msg.id as number
@@ -352,5 +569,19 @@ export function useExtensionMessages(
     return () => window.removeEventListener('message', handler)
   }, [getOfficeState])
 
-  return { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets }
+  return {
+    agents,
+    selectedAgent,
+    agentTools,
+    agentStatuses,
+    subagentTools,
+    subagentCharacters,
+    agentProviders,
+    agentDiagnostics,
+    agentTimelines,
+    providerStatus,
+    deskDirectories,
+    layoutReady,
+    loadedAssets,
+  }
 }

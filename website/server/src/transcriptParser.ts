@@ -15,6 +15,150 @@ import {
 } from './constants.js';
 
 export const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'AskUserQuestion']);
+const CODEX_PERMISSION_SENSITIVE_TOOLS = new Set(['exec_command', 'shell_command']);
+
+function safeJsonParseObject(raw: unknown): Record<string, unknown> {
+	if (typeof raw !== 'string' || !raw.trim()) return {};
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {};
+	} catch {
+		return {};
+	}
+}
+
+function formatCodexToolStatus(toolName: string, rawArgs: unknown): string {
+	const args = safeJsonParseObject(rawArgs);
+	switch (toolName) {
+		case 'exec_command': {
+			const cmd = (args.cmd as string) || '';
+			return cmd
+				? `Running: ${cmd.length > BASH_COMMAND_DISPLAY_MAX_LENGTH ? cmd.slice(0, BASH_COMMAND_DISPLAY_MAX_LENGTH) + '\u2026' : cmd}`
+				: 'Running command';
+		}
+		case 'shell_command': {
+			const cmd = (args.command as string) || '';
+			return cmd
+				? `Running: ${cmd.length > BASH_COMMAND_DISPLAY_MAX_LENGTH ? cmd.slice(0, BASH_COMMAND_DISPLAY_MAX_LENGTH) + '\u2026' : cmd}`
+				: 'Running command';
+		}
+		case 'write_stdin':
+			return 'Interacting with command';
+		case 'update_plan':
+			return 'Updating plan';
+		case 'apply_patch':
+			return 'Editing files';
+		default:
+			return `Using ${toolName}`;
+	}
+}
+
+function setWaitingStatus(
+	agentId: number,
+	agent: WebAgentState,
+	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+	send: (msg: unknown) => void,
+): void {
+	cancelWaitingTimer(agentId, waitingTimers);
+	cancelPermissionTimer(agentId, permissionTimers);
+	if (agent.activeToolIds.size > 0) {
+		agent.activeToolIds.clear();
+		agent.activeToolStatuses.clear();
+		agent.activeToolNames.clear();
+		agent.activeSubagentToolIds.clear();
+		agent.activeSubagentToolNames.clear();
+		send({ type: 'agentToolsClear', id: agentId });
+	}
+	agent.isWaiting = true;
+	agent.permissionSent = false;
+	agent.hadToolsInTurn = false;
+	send({ type: 'agentStatus', id: agentId, status: 'waiting' });
+}
+
+function processCodexTranscriptLine(
+	agentId: number,
+	record: Record<string, unknown>,
+	agent: WebAgentState,
+	agents: Map<number, WebAgentState>,
+	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+	send: (msg: unknown) => void,
+): void {
+	if (record.type === 'event_msg') {
+		const payload = record.payload as Record<string, unknown> | undefined;
+		const eventType = payload?.type as string | undefined;
+		if (eventType === 'user_message' || eventType === 'turn_aborted') {
+			cancelWaitingTimer(agentId, waitingTimers);
+			clearAgentActivity(agent, agentId, permissionTimers, send);
+			agent.hadToolsInTurn = false;
+			return;
+		}
+		if (eventType === 'task_complete') {
+			setWaitingStatus(agentId, agent, waitingTimers, permissionTimers, send);
+		}
+		return;
+	}
+
+	if (record.type !== 'response_item') return;
+
+	const payload = record.payload as Record<string, unknown> | undefined;
+	const payloadType = payload?.type as string | undefined;
+	if (!payload || !payloadType) return;
+
+	if (payloadType === 'function_call') {
+		const toolId = payload.call_id as string | undefined;
+		const toolName = payload.name as string | undefined;
+		if (!toolId || !toolName) return;
+
+		const status = formatCodexToolStatus(toolName, payload.arguments);
+		agent.activeToolIds.add(toolId);
+		agent.activeToolStatuses.set(toolId, status);
+		agent.activeToolNames.set(toolId, toolName);
+		agent.isWaiting = false;
+		agent.hadToolsInTurn = true;
+		send({ type: 'agentStatus', id: agentId, status: 'active' });
+		send({
+			type: 'agentToolStart',
+			id: agentId,
+			toolId,
+			status,
+		});
+		if (CODEX_PERMISSION_SENSITIVE_TOOLS.has(toolName)) {
+			startPermissionTimer(agentId, agents, permissionTimers, CODEX_PERMISSION_SENSITIVE_TOOLS, send);
+		}
+		return;
+	}
+
+	if (payloadType === 'function_call_output') {
+		const toolId = payload.call_id as string | undefined;
+		if (!toolId) return;
+		const existed = agent.activeToolIds.has(toolId);
+		agent.activeToolIds.delete(toolId);
+		agent.activeToolStatuses.delete(toolId);
+		agent.activeToolNames.delete(toolId);
+		if (existed) {
+			setTimeout(() => {
+				send({ type: 'agentToolDone', id: agentId, toolId });
+			}, TOOL_DONE_DELAY_MS);
+		}
+		if (agent.activeToolIds.size === 0) {
+			agent.hadToolsInTurn = false;
+		}
+		return;
+	}
+
+	if (payloadType === 'message' && payload.role === 'assistant') {
+		const phase = payload.phase as string | undefined;
+		if (phase === 'final_answer') {
+			setWaitingStatus(agentId, agent, waitingTimers, permissionTimers, send);
+			return;
+		}
+		if (!agent.hadToolsInTurn) {
+			startWaitingTimer(agentId, TEXT_IDLE_DELAY_MS, agents, waitingTimers, send);
+		}
+	}
+}
 
 export function formatToolStatus(toolName: string, input: Record<string, unknown>): string {
 	const base = (p: unknown) => typeof p === 'string' ? path.basename(p) : '';
@@ -53,6 +197,10 @@ export function processTranscriptLine(
 	if (!agent) return;
 	try {
 		const record = JSON.parse(line);
+		if (agent.provider === 'codex') {
+			processCodexTranscriptLine(agentId, record, agent, agents, waitingTimers, permissionTimers, send);
+			return;
+		}
 
 		if (record.type === 'assistant' && Array.isArray(record.message?.content)) {
 			const blocks = record.message.content as Array<{
@@ -144,27 +292,7 @@ export function processTranscriptLine(
 				agent.hadToolsInTurn = false;
 			}
 		} else if (record.type === 'system' && record.subtype === 'turn_duration') {
-			cancelWaitingTimer(agentId, waitingTimers);
-			cancelPermissionTimer(agentId, permissionTimers);
-
-			// Definitive turn-end: clean up any stale tool state
-			if (agent.activeToolIds.size > 0) {
-				agent.activeToolIds.clear();
-				agent.activeToolStatuses.clear();
-				agent.activeToolNames.clear();
-				agent.activeSubagentToolIds.clear();
-				agent.activeSubagentToolNames.clear();
-				send({ type: 'agentToolsClear', id: agentId });
-			}
-
-			agent.isWaiting = true;
-			agent.permissionSent = false;
-			agent.hadToolsInTurn = false;
-			send({
-				type: 'agentStatus',
-				id: agentId,
-				status: 'waiting',
-			});
+			setWaitingStatus(agentId, agent, waitingTimers, permissionTimers, send);
 		}
 	} catch {
 		// Ignore malformed lines

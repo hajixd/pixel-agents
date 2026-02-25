@@ -1,9 +1,15 @@
 import { useState } from 'react'
 import { SettingsModal } from './SettingsModal.js'
 
+export type ProviderPreference = 'auto' | 'claude' | 'codex'
+
 interface TopRightControlsProps {
   isEditMode: boolean
-  onOpenClaude: () => void
+  onOpenAgent: (provider?: 'claude' | 'codex') => void
+  providerPreference: ProviderPreference
+  onProviderPreferenceChange: (next: ProviderPreference) => void
+  isHealthOpen: boolean
+  onToggleHealthPanel: () => void
   onToggleEditMode: () => void
   isDebugMode: boolean
   onToggleDebugMode: () => void
@@ -43,7 +49,11 @@ const btnActive: React.CSSProperties = {
 
 export function BottomToolbar({
   isEditMode,
-  onOpenClaude,
+  onOpenAgent,
+  providerPreference,
+  onProviderPreferenceChange,
+  isHealthOpen,
+  onToggleHealthPanel,
   onToggleEditMode,
   isDebugMode,
   onToggleDebugMode,
@@ -54,7 +64,7 @@ export function BottomToolbar({
   return (
     <div style={panelStyle}>
       <button
-        onClick={onOpenClaude}
+        onClick={() => onOpenAgent(providerPreference === 'auto' ? undefined : providerPreference)}
         onMouseEnter={() => setHovered('agent')}
         onMouseLeave={() => setHovered(null)}
         style={{
@@ -69,6 +79,39 @@ export function BottomToolbar({
         }}
       >
         + Agent
+      </button>
+      <select
+        value={providerPreference}
+        onChange={(e) => onProviderPreferenceChange(e.target.value as ProviderPreference)}
+        style={{
+          ...btnBase,
+          fontSize: '18px',
+          padding: '5px 6px',
+          width: 102,
+          outline: 'none',
+          background: 'var(--pixel-btn-bg)',
+        }}
+        title="Provider for new agents"
+      >
+        <option value="auto">Auto</option>
+        <option value="claude">Claude</option>
+        <option value="codex">Codex</option>
+      </select>
+      <button
+        onClick={onToggleHealthPanel}
+        onMouseEnter={() => setHovered('health')}
+        onMouseLeave={() => setHovered(null)}
+        style={
+          isHealthOpen
+            ? { ...btnActive }
+            : {
+                ...btnBase,
+                background: hovered === 'health' ? 'var(--pixel-btn-hover-bg)' : btnBase.background,
+              }
+        }
+        title="Health / reliability"
+      >
+        Health
       </button>
       <button
         onClick={onToggleEditMode}

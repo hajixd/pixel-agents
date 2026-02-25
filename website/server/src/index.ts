@@ -25,6 +25,7 @@ import {
 	getProjectDirPath,
 } from './agentManager.js';
 import type { WebAgentState } from './types.js';
+import type { ProjectScanState } from './fileWatcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,7 +50,12 @@ const waitingTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const permissionTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const jsonlPollTimers = new Map<number, ReturnType<typeof setInterval>>();
 const knownJsonlFiles = new Set<string>();
-const projectScanTimer: { current: ReturnType<typeof setInterval> | null } = { current: null };
+const projectScanState: ProjectScanState = {
+	current: null,
+	provider: null,
+	projectDir: null,
+	workspacePath: null,
+};
 const nextAgentId = { current: 1 };
 const nextTerminalIndex = { current: 1 };
 const activeAgentId: { current: number | null } = { current: null };
@@ -200,12 +206,19 @@ wss.on('connection', (ws) => {
 		if (type === 'webviewReady') {
 			void sendAssetsToClient(ws);
 
-		} else if (type === 'openClaude') {
+		} else if (type === 'openClaude' || type === 'openCodex' || type === 'openAgent') {
+			const provider = type === 'openCodex'
+				? 'codex'
+				: type === 'openClaude'
+					? 'claude'
+					: (msg['provider'] as 'claude' | 'codex' | undefined);
 			launchNewAgent(
 				nextAgentId, nextTerminalIndex, agents, activeAgentId,
 				knownJsonlFiles, fileWatchers, pollingTimers, waitingTimers,
-				permissionTimers, jsonlPollTimers, projectScanTimer,
+				permissionTimers, jsonlPollTimers, projectScanState,
 				WORKING_DIR, broadcast, persistAgents,
+				undefined,
+				provider,
 			);
 
 		} else if (type === 'sendPrompt') {
@@ -217,7 +230,7 @@ wss.on('connection', (ws) => {
 				launchNewAgent(
 					nextAgentId, nextTerminalIndex, agents, activeAgentId,
 					knownJsonlFiles, fileWatchers, pollingTimers, waitingTimers,
-					permissionTimers, jsonlPollTimers, projectScanTimer,
+					permissionTimers, jsonlPollTimers, projectScanState,
 					WORKING_DIR, broadcast, persistAgents,
 					prompt,
 				);
@@ -304,6 +317,10 @@ process.on('SIGINT', () => {
 	console.log('\n[Server] Shutting down...');
 	layoutWatcher?.dispose();
 	layoutWatcher = null;
+	if (projectScanState.current) {
+		clearInterval(projectScanState.current);
+		projectScanState.current = null;
+	}
 	for (const agent of agents.values()) {
 		try { agent.ptyProcess.kill(); } catch { /* ignore */ }
 	}

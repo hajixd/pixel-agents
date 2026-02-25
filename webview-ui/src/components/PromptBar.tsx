@@ -1,14 +1,21 @@
 import { useState, useRef } from 'react'
 import { vscode } from '../vscodeApi.js'
 
-export function PromptBar() {
+export type PromptRoute = 'active' | 'broadcast' | 'round_robin'
+
+interface PromptBarProps {
+  route: PromptRoute
+  onRouteChange: (route: PromptRoute) => void
+}
+
+export function PromptBar({ route, onRouteChange }: PromptBarProps) {
   const [prompt, setPrompt] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const handleSubmit = () => {
     const text = prompt.trim()
     if (!text) return
-    vscode.postMessage({ type: 'sendPrompt', prompt: text })
+    vscode.postMessage({ type: 'sendPrompt', prompt: text, route })
     setPrompt('')
     inputRef.current?.focus()
   }
@@ -39,6 +46,24 @@ export function PromptBar() {
         width: 'min(480px, calc(100vw - 120px))',
       }}
     >
+      <select
+        value={route}
+        onChange={(e) => onRouteChange(e.target.value as PromptRoute)}
+        title="Prompt routing"
+        style={{
+          fontSize: '16px',
+          background: 'var(--pixel-btn-bg)',
+          color: 'var(--pixel-text)',
+          border: '2px solid var(--pixel-border)',
+          borderRadius: 0,
+          padding: '5px 4px',
+          minWidth: 94,
+        }}
+      >
+        <option value="active">Active</option>
+        <option value="broadcast">All</option>
+        <option value="round_robin">Round</option>
+      </select>
       <input
         ref={inputRef}
         type="text"

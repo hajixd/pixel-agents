@@ -1,17 +1,87 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { spawnSync } from 'child_process';
 import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
-import type { WebAgentState } from './types.js';
+import type { AgentProvider, WebAgentState } from './types.js';
 import { cancelWaitingTimer, cancelPermissionTimer } from './timerManager.js';
-import { startFileWatching, readNewLines, ensureProjectScan } from './fileWatcher.js';
+import { startFileWatching, readNewLines, ensureProjectScan, type ProjectScanState } from './fileWatcher.js';
 import { JSONL_POLL_INTERVAL_MS, INITIAL_PROMPT_DELAY_MS } from './constants.js';
 
-export function getProjectDirPath(workingDir: string): string {
-	// Match the extension's project hash: replace :, \, / with -
+const PROVIDER_ENV_KEY = 'PIXEL_AGENTS_PROVIDER';
+
+function normalizeProvider(raw?: string): AgentProvider | null {
+	if (!raw) return null;
+	const value = raw.trim().toLowerCase();
+	if (value === 'claude' || value === 'codex') return value;
+	return null;
+}
+
+function hasCli(command: 'claude' | 'codex'): boolean {
+	try {
+		const lookupCommand = process.platform === 'win32' ? 'where' : 'which';
+		const result = spawnSync(lookupCommand, [command], { stdio: 'ignore' });
+		return result.status === 0;
+	} catch {
+		return false;
+	}
+}
+
+export function getDefaultAgentProvider(): AgentProvider {
+	const forced = normalizeProvider(process.env[PROVIDER_ENV_KEY]);
+	if (forced) return forced;
+	if (hasCli('claude')) return 'claude';
+	if (hasCli('codex')) return 'codex';
+	return 'claude';
+}
+
+function resolveProvider(preferred?: AgentProvider): AgentProvider | null {
+	const forced = normalizeProvider(process.env[PROVIDER_ENV_KEY]);
+	const candidates: AgentProvider[] = [];
+	for (const candidate of [preferred, forced, 'claude', 'codex'] as Array<AgentProvider | null | undefined>) {
+		if (!candidate) continue;
+		if (!candidates.includes(candidate)) {
+			candidates.push(candidate);
+		}
+	}
+	for (const candidate of candidates) {
+		if (hasCli(candidate)) return candidate;
+	}
+	return null;
+}
+
+function getLaunchCommand(provider: AgentProvider, sessionId: string): string {
+	if (provider === 'codex') {
+		return 'codex';
+	}
+	return `claude --session-id ${sessionId}`;
+}
+
+function shouldPollExpectedJsonl(provider: AgentProvider): boolean {
+	return provider === 'claude';
+}
+
+export function getProjectDirPath(workingDir: string, provider: AgentProvider = getDefaultAgentProvider()): string {
+	if (provider === 'codex') {
+		return path.join(os.homedir(), '.codex', 'sessions');
+	}
 	const dirName = workingDir.replace(/[:\\/]/g, '-');
 	return path.join(os.homedir(), '.claude', 'projects', dirName);
+}
+
+function spawnProviderPty(workingDir: string, launchCommand: string): IPty {
+	const shell = process.platform === 'win32' ? 'powershell.exe' : '/bin/bash';
+	const args = process.platform === 'win32'
+		? ['-NoProfile', '-Command', launchCommand]
+		: ['-lc', launchCommand];
+	return pty.spawn(shell, args, {
+		name: 'xterm-color',
+		cols: 220,
+		rows: 50,
+		cwd: workingDir,
+		env: process.env as Record<string, string>,
+	});
 }
 
 export function launchNewAgent(
@@ -25,41 +95,46 @@ export function launchNewAgent(
 	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
 	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
 	jsonlPollTimers: Map<number, ReturnType<typeof setInterval>>,
-	projectScanTimerRef: { current: ReturnType<typeof setInterval> | null },
+	projectScanStateRef: ProjectScanState,
 	workingDir: string,
 	send: (msg: unknown) => void,
 	persistAgents: () => void,
 	initialPrompt?: string,
+	providerArg?: AgentProvider,
 ): void {
-	const idx = nextTerminalIndexRef.current++;
-	const sessionId = crypto.randomUUID();
-
-	// Spawn claude with node-pty so it thinks it's in a real terminal
-	let ptyProcess: IPty;
-	try {
-		ptyProcess = pty.spawn(
-			process.platform === 'win32' ? 'powershell.exe' : '/bin/bash',
-			['-c', `claude --session-id ${sessionId}`],
-			{
-				name: 'xterm-color',
-				cols: 220,
-				rows: 50,
-				cwd: workingDir,
-				env: process.env as Record<string, string>,
-			},
-		);
-	} catch (err) {
-		console.error(`[Pixel Agents] Failed to spawn PTY for agent #${idx}: ${err}`);
+	const provider = resolveProvider(providerArg);
+	if (!provider) {
+		const msg = 'Could not start agent: neither `claude` nor `codex` was found in PATH.';
+		console.error(`[Pixel Agents] ${msg}`);
+		send({ type: 'serverError', message: msg });
 		return;
 	}
 
-	const projectDir = getProjectDirPath(workingDir);
-	const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
-	knownJsonlFiles.add(expectedFile);
+	const idx = nextTerminalIndexRef.current++;
+	const sessionId = crypto.randomUUID();
+	const launchCommand = getLaunchCommand(provider, sessionId);
+
+	let ptyProcess: IPty;
+	try {
+		ptyProcess = spawnProviderPty(workingDir, launchCommand);
+	} catch (err) {
+		console.error(`[Pixel Agents] Failed to spawn PTY for agent #${idx}: ${err}`);
+		send({ type: 'serverError', message: `Failed to start ${provider}: ${String(err)}` });
+		return;
+	}
+
+	const projectDir = getProjectDirPath(workingDir, provider);
+	const expectedFile = provider === 'claude'
+		? path.join(projectDir, `${sessionId}.jsonl`)
+		: path.join(projectDir, `pending-${sessionId}.jsonl`);
+	if (provider === 'claude') {
+		knownJsonlFiles.add(expectedFile);
+	}
 
 	const id = nextAgentIdRef.current++;
 	const agent: WebAgentState = {
 		id,
+		provider,
 		ptyProcess,
 		projectDir,
 		jsonlFile: expectedFile,
@@ -79,10 +154,9 @@ export function launchNewAgent(
 	activeAgentIdRef.current = id;
 	persistAgents();
 
-	console.log(`[Pixel Agents] Agent ${id}: spawned claude session ${sessionId} (terminal #${idx}) in ${workingDir}`);
+	console.log(`[Pixel Agents] Agent ${id}: spawned ${provider} session ${sessionId} (terminal #${idx}) in ${workingDir}`);
 	send({ type: 'agentCreated', id });
 
-	// If there's an initial prompt, write it after the startup delay
 	if (initialPrompt) {
 		setTimeout(() => {
 			const currentAgent = agents.get(id);
@@ -93,20 +167,33 @@ export function launchNewAgent(
 		}, INITIAL_PROMPT_DELAY_MS);
 	}
 
-	// Handle PTY exit
 	ptyProcess.onExit(({ exitCode }) => {
-		console.log(`[Pixel Agents] Agent ${id}: PTY exited with code ${exitCode}`);
+		console.log(`[Pixel Agents] Agent ${id}: PTY exited with code ${exitCode} (provider=${provider})`);
 		removeAgent(id, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, jsonlPollTimers, persistAgents);
 		send({ type: 'agentClosed', id });
 	});
 
 	ensureProjectScan(
-		projectDir, knownJsonlFiles, projectScanTimerRef, activeAgentIdRef,
-		nextAgentIdRef, agents, fileWatchers, pollingTimers, waitingTimers,
-		permissionTimers, send, persistAgents,
+		projectDir,
+		knownJsonlFiles,
+		projectScanStateRef,
+		activeAgentIdRef,
+		nextAgentIdRef,
+		agents,
+		fileWatchers,
+		pollingTimers,
+		waitingTimers,
+		permissionTimers,
+		send,
+		persistAgents,
+		provider,
+		workingDir,
 	);
 
-	// Poll for the JSONL file to appear (claude writes it on first turn)
+	if (!shouldPollExpectedJsonl(provider)) {
+		return;
+	}
+
 	const pollTimer = setInterval(() => {
 		try {
 			if (fs.existsSync(agent.jsonlFile)) {
@@ -116,7 +203,9 @@ export function launchNewAgent(
 				startFileWatching(id, agent.jsonlFile, agents, fileWatchers, pollingTimers, waitingTimers, permissionTimers, send);
 				readNewLines(id, agents, waitingTimers, permissionTimers, send);
 			}
-		} catch { /* file may not exist yet */ }
+		} catch {
+			// file may not exist yet
+		}
 	}, JSONL_POLL_INTERVAL_MS);
 	jsonlPollTimers.set(id, pollTimer);
 }

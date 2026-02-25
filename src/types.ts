@@ -1,7 +1,12 @@
 import type * as vscode from 'vscode';
 
+export type AgentProvider = 'claude' | 'codex';
+export type PromptRoute = 'active' | 'broadcast' | 'round_robin';
+
 export interface AgentState {
 	id: number;
+	provider: AgentProvider;
+	workingDir: string | null;
 	terminalRef: vscode.Terminal;
 	projectDir: string;
 	jsonlFile: string;
@@ -20,6 +25,8 @@ export interface AgentState {
 
 export interface PersistedAgent {
 	id: number;
+	provider?: AgentProvider;
+	workingDir?: string | null;
 	terminalName: string;
 	jsonlFile: string;
 	projectDir: string;

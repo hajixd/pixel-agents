@@ -2,11 +2,13 @@ import { useState, useEffect } from 'react'
 import type { OfficeState } from '../office/engine/officeState.js'
 import type { SubagentCharacter } from '../hooks/useExtensionMessages.js'
 import { TILE_SIZE, CharacterState } from '../office/types.js'
+import type { AgentProvider } from '../hooks/useExtensionMessages.js'
 
 interface AgentLabelsProps {
   officeState: OfficeState
   agents: number[]
   agentStatuses: Record<number, string>
+  agentProviders: Record<number, AgentProvider>
   containerRef: React.RefObject<HTMLDivElement | null>
   zoom: number
   panRef: React.RefObject<{ x: number; y: number }>
@@ -17,6 +19,7 @@ export function AgentLabels({
   officeState,
   agents,
   agentStatuses,
+  agentProviders,
   containerRef,
   zoom,
   panRef,
@@ -79,6 +82,8 @@ export function AgentLabels({
         }
 
         const labelText = subLabelMap.get(id) || `Agent #${id}`
+        const provider = agentProviders[id]
+        const providerBadge = provider === 'codex' ? 'Cdx' : provider === 'claude' ? 'Cl' : null
 
         return (
           <div
@@ -122,6 +127,20 @@ export function AgentLabels({
               }}
             >
               {labelText}
+              {!isSub && providerBadge && (
+                <span
+                  style={{
+                    marginLeft: 6,
+                    fontSize: '12px',
+                    padding: '1px 3px',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    color: 'rgba(255,255,255,0.85)',
+                    background: provider === 'codex' ? 'rgba(73, 165, 255, 0.18)' : 'rgba(255, 175, 90, 0.18)',
+                  }}
+                >
+                  {providerBadge}
+                </span>
+              )}
             </span>
           </div>
         )

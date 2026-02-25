@@ -1,3 +1,6 @@
+export type AgentProvider = 'claude' | 'codex';
+export type PromptRoute = 'active' | 'broadcast' | 'round_robin';
+
 export interface AgentProcess {
 	write(data: string): void;
 	kill(): void;
@@ -6,6 +9,8 @@ export interface AgentProcess {
 
 export interface WebAgentState {
 	id: number;
+	provider: AgentProvider;
+	workingDir: string;
 	process: AgentProcess;
 	processMode: 'pty' | 'stdio';
 	projectDir: string;

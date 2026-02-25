@@ -16,6 +16,203 @@ import {
 } from './constants.js';
 
 export const PERMISSION_EXEMPT_TOOLS = new Set(['Task', 'AskUserQuestion']);
+const CODEX_PERMISSION_SENSITIVE_TOOLS = new Set(['exec_command', 'shell_command']);
+
+function extractTextFromBlocks(rawBlocks: unknown): string {
+	if (!Array.isArray(rawBlocks)) return '';
+	const parts: string[] = [];
+	for (const block of rawBlocks) {
+		if (!block || typeof block !== 'object') continue;
+		const b = block as Record<string, unknown>;
+		const text = b.text;
+		if (typeof text === 'string' && text.trim()) {
+			parts.push(text.trim());
+			continue;
+		}
+		if (Array.isArray(text)) {
+			for (const item of text) {
+				if (typeof item === 'string' && item.trim()) {
+					parts.push(item.trim());
+				}
+			}
+		}
+	}
+	return parts.join('\n').trim();
+}
+
+function extractCodexMessageText(payload: Record<string, unknown> | undefined): string {
+	if (!payload) return '';
+	const direct = payload.content;
+	if (typeof direct === 'string' && direct.trim()) return direct.trim();
+	if (Array.isArray(direct)) {
+		const fromDirect = extractTextFromBlocks(direct);
+		if (fromDirect) return fromDirect;
+	}
+	const maybeMessage = payload.message;
+	if (typeof maybeMessage === 'string' && maybeMessage.trim()) return maybeMessage.trim();
+	if (maybeMessage && typeof maybeMessage === 'object') {
+		const record = maybeMessage as Record<string, unknown>;
+		if (typeof record.content === 'string' && record.content.trim()) return record.content.trim();
+		if (Array.isArray(record.content)) {
+			const fromRecord = extractTextFromBlocks(record.content);
+			if (fromRecord) return fromRecord;
+		}
+	}
+	return '';
+}
+
+function safeJsonParseObject(raw: unknown): Record<string, unknown> {
+	if (typeof raw !== 'string' || !raw.trim()) return {};
+	try {
+		const parsed = JSON.parse(raw) as unknown;
+		return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {};
+	} catch {
+		return {};
+	}
+}
+
+function formatCodexToolStatus(toolName: string, rawArgs: unknown): string {
+	const args = safeJsonParseObject(rawArgs);
+	switch (toolName) {
+		case 'exec_command': {
+			const cmd = (args.cmd as string) || '';
+			return cmd
+				? `Running: ${cmd.length > BASH_COMMAND_DISPLAY_MAX_LENGTH ? cmd.slice(0, BASH_COMMAND_DISPLAY_MAX_LENGTH) + '\u2026' : cmd}`
+				: 'Running command';
+		}
+		case 'shell_command': {
+			const cmd = (args.command as string) || '';
+			return cmd
+				? `Running: ${cmd.length > BASH_COMMAND_DISPLAY_MAX_LENGTH ? cmd.slice(0, BASH_COMMAND_DISPLAY_MAX_LENGTH) + '\u2026' : cmd}`
+				: 'Running command';
+		}
+		case 'write_stdin':
+			return 'Interacting with command';
+		case 'update_plan':
+			return 'Updating plan';
+		case 'apply_patch':
+			return 'Editing files';
+		default:
+			return `Using ${toolName}`;
+	}
+}
+
+function setWaitingStatus(
+	agentId: number,
+	agent: AgentState,
+	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+	webview: vscode.Webview | undefined,
+): void {
+	cancelWaitingTimer(agentId, waitingTimers);
+	cancelPermissionTimer(agentId, permissionTimers);
+	if (agent.activeToolIds.size > 0) {
+		agent.activeToolIds.clear();
+		agent.activeToolStatuses.clear();
+		agent.activeToolNames.clear();
+		agent.activeSubagentToolIds.clear();
+		agent.activeSubagentToolNames.clear();
+		webview?.postMessage({ type: 'agentToolsClear', id: agentId });
+	}
+	agent.isWaiting = true;
+	agent.permissionSent = false;
+	agent.hadToolsInTurn = false;
+	webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
+}
+
+function processCodexTranscriptLine(
+	agentId: number,
+	record: Record<string, unknown>,
+	agent: AgentState,
+	agents: Map<number, AgentState>,
+	waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+	permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+	webview: vscode.Webview | undefined,
+): void {
+	if (record.type === 'event_msg') {
+		const payload = record.payload as Record<string, unknown> | undefined;
+		const eventType = payload?.type as string | undefined;
+		if (eventType === 'user_message' || eventType === 'turn_aborted') {
+			if (eventType === 'user_message') {
+				const text = extractCodexMessageText(payload);
+				if (text) {
+					webview?.postMessage({ type: 'agentMessage', id: agentId, role: 'user', text, timestamp: Date.now() });
+				}
+			}
+			cancelWaitingTimer(agentId, waitingTimers);
+			clearAgentActivity(agent, agentId, permissionTimers, webview);
+			agent.hadToolsInTurn = false;
+			return;
+		}
+		if (eventType === 'task_complete') {
+			setWaitingStatus(agentId, agent, waitingTimers, permissionTimers, webview);
+		}
+		return;
+	}
+
+	if (record.type !== 'response_item') return;
+
+	const payload = record.payload as Record<string, unknown> | undefined;
+	const payloadType = payload?.type as string | undefined;
+	if (!payload || !payloadType) return;
+
+	if (payloadType === 'function_call') {
+		const toolId = payload.call_id as string | undefined;
+		const toolName = payload.name as string | undefined;
+		if (!toolId || !toolName) return;
+
+		const status = formatCodexToolStatus(toolName, payload.arguments);
+		agent.activeToolIds.add(toolId);
+		agent.activeToolStatuses.set(toolId, status);
+		agent.activeToolNames.set(toolId, toolName);
+		agent.isWaiting = false;
+		agent.hadToolsInTurn = true;
+		webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
+		webview?.postMessage({
+			type: 'agentToolStart',
+			id: agentId,
+			toolId,
+			status,
+		});
+		if (CODEX_PERMISSION_SENSITIVE_TOOLS.has(toolName)) {
+			startPermissionTimer(agentId, agents, permissionTimers, CODEX_PERMISSION_SENSITIVE_TOOLS, webview);
+		}
+		return;
+	}
+
+	if (payloadType === 'function_call_output') {
+		const toolId = payload.call_id as string | undefined;
+		if (!toolId) return;
+		const existed = agent.activeToolIds.has(toolId);
+		agent.activeToolIds.delete(toolId);
+		agent.activeToolStatuses.delete(toolId);
+		agent.activeToolNames.delete(toolId);
+		if (existed) {
+			setTimeout(() => {
+				webview?.postMessage({ type: 'agentToolDone', id: agentId, toolId });
+			}, TOOL_DONE_DELAY_MS);
+		}
+		if (agent.activeToolIds.size === 0) {
+			agent.hadToolsInTurn = false;
+		}
+		return;
+	}
+
+	if (payloadType === 'message' && payload.role === 'assistant') {
+		const text = extractCodexMessageText(payload);
+		if (text) {
+			webview?.postMessage({ type: 'agentMessage', id: agentId, role: 'assistant', text, timestamp: Date.now() });
+		}
+		const phase = payload.phase as string | undefined;
+		if (phase === 'final_answer') {
+			setWaitingStatus(agentId, agent, waitingTimers, permissionTimers, webview);
+			return;
+		}
+		if (!agent.hadToolsInTurn) {
+			startWaitingTimer(agentId, TEXT_IDLE_DELAY_MS, agents, waitingTimers, webview);
+		}
+	}
+}
 
 export function formatToolStatus(toolName: string, input: Record<string, unknown>): string {
 	const base = (p: unknown) => typeof p === 'string' ? path.basename(p) : '';
@@ -54,11 +251,24 @@ export function processTranscriptLine(
 	if (!agent) return;
 	try {
 		const record = JSON.parse(line);
+		if (agent.provider === 'codex') {
+			processCodexTranscriptLine(agentId, record, agent, agents, waitingTimers, permissionTimers, webview);
+			return;
+		}
 
 		if (record.type === 'assistant' && Array.isArray(record.message?.content)) {
 			const blocks = record.message.content as Array<{
 				type: string; id?: string; name?: string; input?: Record<string, unknown>;
 			}>;
+			const assistantText = blocks
+				.filter((b) => b.type === 'text' && typeof (b as { text?: unknown }).text === 'string')
+				.map((b) => ((b as { text?: string }).text ?? '').trim())
+				.filter(Boolean)
+				.join('\n')
+				.trim();
+			if (assistantText) {
+				webview?.postMessage({ type: 'agentMessage', id: agentId, role: 'assistant', text: assistantText, timestamp: Date.now() });
+			}
 			const hasToolUse = blocks.some(b => b.type === 'tool_use');
 
 			if (hasToolUse) {
@@ -101,6 +311,15 @@ export function processTranscriptLine(
 		} else if (record.type === 'user') {
 			const content = record.message?.content;
 			if (Array.isArray(content)) {
+				const userText = content
+					.filter((b) => b.type === 'text' && typeof (b as { text?: unknown }).text === 'string')
+					.map((b) => ((b as { text?: string }).text ?? '').trim())
+					.filter(Boolean)
+					.join('\n')
+					.trim();
+				if (userText) {
+					webview?.postMessage({ type: 'agentMessage', id: agentId, role: 'user', text: userText, timestamp: Date.now() });
+				}
 				const blocks = content as Array<{ type: string; tool_use_id?: string }>;
 				const hasToolResult = blocks.some(b => b.type === 'tool_result');
 				if (hasToolResult) {
@@ -143,33 +362,14 @@ export function processTranscriptLine(
 					agent.hadToolsInTurn = false;
 				}
 			} else if (typeof content === 'string' && content.trim()) {
+				webview?.postMessage({ type: 'agentMessage', id: agentId, role: 'user', text: content.trim(), timestamp: Date.now() });
 				// New user text prompt — new turn starting
 				cancelWaitingTimer(agentId, waitingTimers);
 				clearAgentActivity(agent, agentId, permissionTimers, webview);
 				agent.hadToolsInTurn = false;
 			}
 		} else if (record.type === 'system' && record.subtype === 'turn_duration') {
-			cancelWaitingTimer(agentId, waitingTimers);
-			cancelPermissionTimer(agentId, permissionTimers);
-
-			// Definitive turn-end: clean up any stale tool state
-			if (agent.activeToolIds.size > 0) {
-				agent.activeToolIds.clear();
-				agent.activeToolStatuses.clear();
-				agent.activeToolNames.clear();
-				agent.activeSubagentToolIds.clear();
-				agent.activeSubagentToolNames.clear();
-				webview?.postMessage({ type: 'agentToolsClear', id: agentId });
-			}
-
-			agent.isWaiting = true;
-			agent.permissionSent = false;
-			agent.hadToolsInTurn = false;
-			webview?.postMessage({
-				type: 'agentStatus',
-				id: agentId,
-				status: 'waiting',
-			});
+			setWaitingStatus(agentId, agent, waitingTimers, permissionTimers, webview);
 		}
 	} catch {
 		// Ignore malformed lines

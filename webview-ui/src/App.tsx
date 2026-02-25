@@ -12,8 +12,12 @@ import { PULSE_ANIMATION_DURATION_SEC } from './constants.js'
 import { useEditorActions } from './hooks/useEditorActions.js'
 import { useEditorKeyboard } from './hooks/useEditorKeyboard.js'
 import { ZoomControls } from './components/ZoomControls.js'
-import { BottomToolbar } from './components/BottomToolbar.js'
-import { PromptBar } from './components/PromptBar.js'
+import { BottomToolbar, type ProviderPreference } from './components/BottomToolbar.js'
+import { PromptBar, type PromptRoute } from './components/PromptBar.js'
+import { ApprovalQueue } from './components/ApprovalQueue.js'
+import { ReliabilityPanel } from './components/ReliabilityPanel.js'
+import { AgentInspectorPanel } from './components/AgentInspectorPanel.js'
+import { BeginnerAssistPanel } from './components/BeginnerAssistPanel.js'
 import { DebugView } from './components/DebugView.js'
 
 // Game state lives outside React — updated imperatively by message handlers
@@ -122,9 +126,27 @@ function App() {
 
   const isEditDirty = useCallback(() => editor.isEditMode && editor.isDirty, [editor.isEditMode, editor.isDirty])
 
-  const { agents, selectedAgent, agentTools, agentStatuses, subagentTools, subagentCharacters, layoutReady, loadedAssets } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty)
+  const {
+    agents,
+    selectedAgent,
+    agentTools,
+    agentStatuses,
+    subagentTools,
+    subagentCharacters,
+    agentProviders,
+    agentDiagnostics,
+    agentTimelines,
+    providerStatus,
+    deskDirectories,
+    layoutReady,
+    loadedAssets,
+  } = useExtensionMessages(getOfficeState, editor.setLastSavedLayout, isEditDirty)
 
   const [isDebugMode, setIsDebugMode] = useState(false)
+  const [isHealthOpen, setIsHealthOpen] = useState(false)
+  const [providerPreference, setProviderPreference] = useState<ProviderPreference>('auto')
+  const [promptRoute, setPromptRoute] = useState<PromptRoute>('active')
+  const [showBeginnerAssist, setShowBeginnerAssist] = useState(true)
 
   const handleToggleDebugMode = useCallback(() => setIsDebugMode((prev) => !prev), [])
 
@@ -150,6 +172,30 @@ function App() {
   const handleCloseAgent = useCallback((id: number) => {
     vscode.postMessage({ type: 'closeAgent', id })
   }, [])
+
+  const handleResyncAgent = useCallback((id: number) => {
+    vscode.postMessage({ type: 'resyncAgent', id })
+  }, [])
+
+  const handleSaveDeskDirectories = useCallback((directories: Record<string, string>) => {
+    vscode.postMessage({ type: 'saveDeskDirectories', directories })
+  }, [])
+
+  const handleSendPromptToAgent = useCallback((id: number, prompt: string) => {
+    vscode.postMessage({ type: 'sendPromptToAgent', id, prompt })
+  }, [])
+
+  const handleRelayToAgent = useCallback((sourceId: number, targetId: number, note?: string) => {
+    vscode.postMessage({ type: 'relayAgentInfo', sourceId, targetId, note })
+  }, [])
+
+  const handleRelayToAll = useCallback((sourceId: number, note?: string) => {
+    vscode.postMessage({ type: 'relayAgentInfoAll', sourceId, note })
+  }, [])
+
+  const handleRunStarterPrompt = useCallback((prompt: string) => {
+    vscode.postMessage({ type: 'sendPrompt', prompt, route: promptRoute })
+  }, [promptRoute])
 
   const handleClick = useCallback((agentId: number) => {
     // If clicked agent is a sub-agent, focus the parent's terminal instead
@@ -226,13 +272,76 @@ function App() {
 
       <BottomToolbar
         isEditMode={editor.isEditMode}
-        onOpenClaude={editor.handleOpenClaude}
+        onOpenAgent={editor.handleOpenAgent}
+        providerPreference={providerPreference}
+        onProviderPreferenceChange={setProviderPreference}
+        isHealthOpen={isHealthOpen}
+        onToggleHealthPanel={() => setIsHealthOpen((prev) => !prev)}
         onToggleEditMode={editor.handleToggleEditMode}
         isDebugMode={isDebugMode}
         onToggleDebugMode={handleToggleDebugMode}
       />
 
-      <PromptBar />
+      <PromptBar route={promptRoute} onRouteChange={setPromptRoute} />
+
+      {showBeginnerAssist && (
+        <BeginnerAssistPanel onRunPrompt={handleRunStarterPrompt} />
+      )}
+
+      <button
+        onClick={() => setShowBeginnerAssist((prev) => !prev)}
+        style={{
+          position: 'absolute',
+          left: 10,
+          bottom: showBeginnerAssist ? 58 : 86,
+          zIndex: 59,
+          fontSize: '14px',
+          border: '1px solid var(--pixel-border)',
+          background: 'var(--pixel-btn-bg)',
+          color: 'var(--pixel-text)',
+          padding: '4px 8px',
+          cursor: 'pointer',
+        }}
+      >
+        {showBeginnerAssist ? 'Hide Beginner Mode' : 'Show Beginner Mode'}
+      </button>
+
+      <ApprovalQueue
+        agents={agents}
+        agentTools={agentTools}
+        agentProviders={agentProviders}
+        onFocusAgent={handleSelectAgent}
+      />
+
+      <ReliabilityPanel
+        isOpen={isHealthOpen}
+        onClose={() => setIsHealthOpen(false)}
+        agents={agents}
+        agentProviders={agentProviders}
+        agentDiagnostics={agentDiagnostics}
+        providerStatus={providerStatus}
+        deskDirectories={deskDirectories}
+        seatIds={[...officeState.seats.keys()]}
+        onFocusAgent={handleSelectAgent}
+        onResyncAgent={handleResyncAgent}
+        onSaveDeskDirectories={handleSaveDeskDirectories}
+      />
+
+      <AgentInspectorPanel
+        officeState={officeState}
+        agents={agents}
+        selectedAgent={selectedAgent}
+        agentProviders={agentProviders}
+        agentStatuses={agentStatuses}
+        agentTools={agentTools}
+        agentDiagnostics={agentDiagnostics}
+        agentTimelines={agentTimelines}
+        onFocusAgent={handleSelectAgent}
+        onResyncAgent={handleResyncAgent}
+        onSendPromptToAgent={handleSendPromptToAgent}
+        onRelayToAgent={handleRelayToAgent}
+        onRelayToAll={handleRelayToAll}
+      />
 
       {editor.isEditMode && editor.isDirty && (
         <EditActionBar editor={editor} editorState={editorState} />
@@ -291,6 +400,7 @@ function App() {
         officeState={officeState}
         agents={agents}
         agentTools={agentTools}
+        agentProviders={agentProviders}
         subagentCharacters={subagentCharacters}
         containerRef={containerRef}
         zoom={editor.zoom}

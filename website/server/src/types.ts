@@ -1,7 +1,10 @@
 import type { IPty } from 'node-pty';
 
+export type AgentProvider = 'claude' | 'codex';
+
 export interface WebAgentState {
 	id: number;
+	provider: AgentProvider;
 	ptyProcess: IPty;
 	projectDir: string;
 	jsonlFile: string;

@@ -4,6 +4,7 @@ out/**
 **/node_modules/**
 src/**
 webview-ui/**
+website/**
 scripts/**
 sprites-export/**
 logs/**

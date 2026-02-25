@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { ToolActivity } from '../types.js'
 import type { OfficeState } from '../engine/officeState.js'
-import type { SubagentCharacter } from '../../hooks/useExtensionMessages.js'
+import type { AgentProvider, SubagentCharacter } from '../../hooks/useExtensionMessages.js'
 import { TILE_SIZE, CharacterState } from '../types.js'
 import { TOOL_OVERLAY_VERTICAL_OFFSET, CHARACTER_SITTING_OFFSET_PX } from '../../constants.js'
 
@@ -9,6 +9,7 @@ interface ToolOverlayProps {
   officeState: OfficeState
   agents: number[]
   agentTools: Record<number, ToolActivity[]>
+  agentProviders: Record<number, AgentProvider>
   subagentCharacters: SubagentCharacter[]
   containerRef: React.RefObject<HTMLDivElement | null>
   zoom: number
@@ -44,6 +45,7 @@ export function ToolOverlay({
   officeState,
   agents,
   agentTools,
+  agentProviders,
   subagentCharacters,
   containerRef,
   zoom,
@@ -88,6 +90,8 @@ export function ToolOverlay({
         const isSelected = selectedId === id
         const isHovered = hoveredId === id
         const isSub = ch.isSubagent
+        const provider = agentProviders[id]
+        const providerBadge = provider === 'codex' ? 'Cdx' : provider === 'claude' ? 'Cl' : null
 
         // Only show for hovered or selected agents
         if (!isSelected && !isHovered) return null
@@ -178,6 +182,21 @@ export function ToolOverlay({
               >
                 {activityText}
               </span>
+              {!isSub && providerBadge && (
+                <span
+                  style={{
+                    fontSize: '12px',
+                    padding: '1px 3px',
+                    border: '1px solid rgba(255,255,255,0.45)',
+                    color: 'rgba(255,255,255,0.9)',
+                    background: provider === 'codex' ? 'rgba(73, 165, 255, 0.18)' : 'rgba(255, 175, 90, 0.18)',
+                    flexShrink: 0,
+                  }}
+                  title={provider === 'codex' ? 'Codex' : 'Claude'}
+                >
+                  {providerBadge}
+                </span>
+              )}
               {isSelected && !isSub && (
                 <button
                   onClick={(e) => {
